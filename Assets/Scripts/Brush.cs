@@ -1,15 +1,20 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Text.RegularExpressions;
 using UnityEngine;
+using Valve.VR;
+using Valve.VR.InteractionSystem;
 
 namespace ShoesDesigner
 {
     public class Brush : MonoBehaviour
     {
         public Color color;
+        private int colorIndex = 0;
+        private Color[] colors = { Color.white, Color.blue, Color.red, Color.yellow, Color.green, Color.black };
 
-        private Transform nib;
+        private GameObject nib;
 
         private Texture2D prevTexture;
         private Vector2 prevPosition;
@@ -19,9 +24,11 @@ namespace ShoesDesigner
 
         private GameObject[] brushes;
 
+        public Hand rightHand;
+
         private void Awake()
         {
-            color = Color.black;
+            // color = Color.black;
 
             brushes = new GameObject[4];
             brushes[0] = transform.Find("Brush_s").gameObject;
@@ -37,7 +44,8 @@ namespace ShoesDesigner
 
         private void Start()
         {
-            nib = transform.Find("Nib");
+            nib = GameObject.Find("Nib").gameObject;
+            interactable = GetComponent<Interactable>();
         }
 
         private void Update()
@@ -46,11 +54,36 @@ namespace ShoesDesigner
             {
                 Draw();
             }
+            UpdateColor();
+        }
+
+        
+
+        private void UpdateColor()
+        {
+            var bindTrigger = rightHand.bindTrigger;
+            if (bindTrigger.GetStateDown(SteamVR_Input_Sources.RightHand))
+            {
+                if (colorIndex != colors.Length - 1)
+                {
+                    colorIndex += 1;
+                }
+                else
+                {
+                    colorIndex = 0;
+                }
+                color = colors[colorIndex];
+            }
+
+            if (bindTrigger.GetState(SteamVR_Input_Sources.RightHand))
+            {
+                
+            }
         }
 
         public Vector3 GetNibPosition()
         {
-            return nib.position;
+            return nib.transform.position;
         }
 
         public void SetBrushType(BrushType type)
@@ -80,21 +113,81 @@ namespace ShoesDesigner
         }
 
         private bool IsTriggered()
-        {   
-            // TODO: Add support for VR controllers
+        {
+#if ENABLE_VR
+            var attachTrigger = rightHand.attachTrigger;
+            if (attachTrigger.GetStateDown(SteamVR_Input_Sources.RightHand))
+            {
+            }
+
+            if (attachTrigger.GetState(SteamVR_Input_Sources.RightHand))
+            {
+            }
+
+            return attachTrigger.GetState(SteamVR_Input_Sources.RightHand);
+#else
             return Input.GetMouseButton(0);
+#endif
+        }
+
+        private Interactable interactable;
+
+        private Hand.AttachmentFlags attachmentFlags = Hand.defaultAttachmentFlags & (~Hand.AttachmentFlags.SnapOnAttach) & (~Hand.AttachmentFlags.DetachOthers) & (~Hand.AttachmentFlags.VelocityMovement);
+
+        private Vector3 oldPosition;
+        private Quaternion oldRotation;
+
+        private void OnHandHoverBegin(Hand hand)
+        {
+        }
+
+        private void OnHandHoverEnd(Hand hand)
+        {
+        }
+
+        private void HandHoverUpdate(Hand hand)
+        {
+            var startingGrabType = hand.GetGrabStarting();
+            bool isGrabEnding = hand.IsGrabEnding(this.gameObject);
+
+            if (interactable.attachedToHand == null && startingGrabType != GrabTypes.None)
+            {
+                oldPosition = transform.position;
+                oldRotation = transform.rotation;
+                hand.HoverLock(interactable);
+                hand.AttachObject(gameObject, startingGrabType, attachmentFlags);
+            }
+            else if (isGrabEnding)
+            {
+                hand.DetachObject(gameObject);
+                hand.HoverUnlock(interactable);
+                transform.position = oldPosition;
+                transform.rotation = oldRotation;
+            }
         }
 
         private void Draw()
         {
             RaycastHit hit;
-            if (!Physics.Raycast(nib.position, nib.forward, out hit))
+            if (!Physics.Raycast(nib.transform.position, nib.transform.forward, out hit))
             {
                 return;
             }
-            if ((hit.transform.position - nib.position).magnitude > 1.0f)
+
+            //var a = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            //a.transform.position = hit.transform.position;
+            //a.transform.localScale = Vector3.one;
+            //Debug.Log(hit.transform.position);
+
+            if ((hit.transform.position - nib.transform.position).magnitude > 0.3f)
             {
                 return; // TODO: tweaks the distance
+            }
+
+            var meshEditor = hit.transform.GetComponent<MeshEditor>();
+            if (meshEditor == null || !meshEditor.editable)
+            {
+                return;
             }
 
             var renderer = hit.collider.GetComponent<Renderer>();
@@ -109,27 +202,32 @@ namespace ShoesDesigner
             pixelUV.x *= texture.width;
             pixelUV.y *= texture.height;
 
-            if (prevTexture == texture)
-            {
-                if ((prevPosition - pixelUV).magnitude < (width >> 2))
-                {
+            //if (prevTexture == null)
+            //{
+            //    prevTexture = texture;
+            //}
+
+            //if (prevTexture == texture)
+            //{
+            //    if ((prevPosition - pixelUV).magnitude < (width >> 2))
+            //    {
                     DrawTexture(texture, pixelUV);
-                }
-                else
-                {
-                    var inter = 1 / Mathf.Max(Mathf.Abs(pixelUV.x - prevPosition.x), Mathf.Abs(pixelUV.y - prevPosition.y) / (width >> 2));
-                    var num = 0.0f;
-                    while (num <= 1)
-                    {
-                        num += inter;
-                        DrawTexture(texture, Vector2.Lerp(prevPosition, pixelUV, 3 * Mathf.Pow(num, 2) - 2 * Mathf.Pow(num, 3)));
-                    }
-                    DrawTexture(texture, pixelUV);
-                }
-            } 
+            //    }
+            //    else
+            //    {
+            //        var inter = 1 / Mathf.Max(Mathf.Abs(pixelUV.x - prevPosition.x), Mathf.Abs(pixelUV.y - prevPosition.y) / (width >> 2));
+            //        var num = 0.0f;
+            //        while (num <= 1)
+            //        {
+            //            num += inter;
+            //            DrawTexture(texture, Vector2.Lerp(prevPosition, pixelUV, 3 * Mathf.Pow(num, 2) - 2 * Mathf.Pow(num, 3)));
+            //        }
+            //        DrawTexture(texture, pixelUV);
+            //    }
+            //} 
             
-            prevTexture = texture;
-            prevPosition = pixelUV;
+            //prevTexture = texture;
+            //prevPosition = pixelUV;
             texture.Apply();
         }
 
@@ -139,14 +237,15 @@ namespace ShoesDesigner
             {
                 for (int j = 0; j < width; j++)
                 {
-                    var oriColor = texture.GetPixel((int)pixelUV.x + i - (width >> 1), (int)pixelUV.y + j - (width >> 1));
-                    var resColor = color * color.a + (1 - color.a) * oriColor;
-                    texture.SetPixel((int)pixelUV.x + i - (width >> 1), (int)pixelUV.y + j - width >> 1, resColor);
+                    //var oriColor = texture.GetPixel((int)pixelUV.x + i - (width >> 1), (int)pixelUV.y + j - (width >> 1));
+                    //var resColor = color * color.a + (1 - color.a) * oriColor;
+                    //texture.SetPixel((int)pixelUV.x + i - (width >> 1), (int)pixelUV.y + j - width >> 1, resColor);
+                    texture.SetPixel((int)pixelUV.x + i - (width >> 1), (int)pixelUV.y + j - (width >> 1), color);
                 }
             }
         }
 
-        public enum BrushType : int
+        public enum BrushType : byte
         {   
             SMALL = 0,
             MEDIUM,

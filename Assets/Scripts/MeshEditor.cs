@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using UnityEngine;
+using Valve.VR;
+using Valve.VR.InteractionSystem;
 
 namespace ShoesDesigner
 {
@@ -21,30 +23,40 @@ namespace ShoesDesigner
         private float radio = 0.02f;
         private SortedSet<Tuple<float, int>> affected;
 
-        public Color color;
+        public Color color = Color.black;
 
         private bool showWireframe = true;
 
-        private List<GameObject> controllPoints;
-        private List<List<float>> riggingWeight;
+        public Hand rightHand;
 
-        public Material transparent;
+        public List<GameObject> controllPoints;
+        private List<List<float>> riggingWeight;
+        private int cpIndex;
+        
+        private Material initialMaterial;
+        
+        [Space]
+        public Material transparentMaterial;
+
+        [Space]
+        public bool editable;
+        public Material editableMaterial;
 
         private void Awake()
         {
             mesh = GetComponent<MeshFilter>().mesh;
 
-            controllPoints = new List<GameObject>();
-            string pattern = @"^cp";
-            Regex regex = new Regex(pattern);
-            foreach (Transform child in transform)
-            {
-                if (regex.IsMatch(child.name))
-                {
-                    controllPoints.Add(child.gameObject);
-                }
-            }
-            
+            // controllPoints = new List<GameObject>();
+            // string pattern = @"^cp";
+            // Regex regex = new Regex(pattern);
+            // foreach (Transform child in transform)
+            // {
+            //     if (regex.IsMatch(child.name))
+            //     {
+            //         controllPoints.Add(child.gameObject);
+            //     }
+            // }
+
             riggingWeight = new List<List<float>>();
             foreach (var vertex in mesh.vertices)
             {
@@ -65,15 +77,21 @@ namespace ShoesDesigner
                 {
                     weight.Add(0);
                 }
-                weight[dis[0].Item2] = dis[0].Item1 / (dis[0].Item1 + dis[1].Item1);
-                weight[dis[1].Item2] = dis[1].Item1 / (dis[0].Item1 + dis[1].Item1);
+                weight[dis[0].Item2] = dis[2].Item1 / (dis[0].Item1 + dis[1].Item1 + dis[2].Item1);
+                weight[dis[1].Item2] = dis[1].Item1 / (dis[0].Item1 + dis[1].Item1 + dis[2].Item1);
+                weight[dis[2].Item2] = dis[0].Item1 / (dis[0].Item1 + dis[1].Item1 + dis[2].Item1);
                 riggingWeight.Add(weight);
             }
+
+            var meshRenderer = GetComponent<MeshRenderer>();
+            initialMaterial = meshRenderer.material;
         }
 
         private void Start()
         {
             SetWireframeMaterial();
+
+            // mesh = GetComponent<MeshFilter>().mesh;
 
             edges = new HashSet<Vector2Int>();
             vertices = mesh.vertices;
@@ -90,24 +108,68 @@ namespace ShoesDesigner
                 penEditor = GameObject.Find("PenEditor");
             }
             seniorPen = penEditor.GetComponent<SeniorPen>();
-
-            var meshRenderer = GetComponent<MeshRenderer>();
-            meshRenderer.material = transparent;
+            
+            if (rightHand == null)
+            {
+                rightHand = GameObject.Find("Player/SteamVRObjects/RightHand").GetComponent<Hand>();
+            }
         }
 
         private void Update()
         {
             UpdateMesh();
-            UpdateRigging();
+            if (StepManager.instance.GetCurrentStep() == StepManager.Step.BIGEDIT)
+            {
+                UpdateRigging();
+            }
+            
             UpdateWireframeStatus();
         }
-
-        int cpIndex;
 
         private void UpdateMesh()
         {
             var nibPostion = seniorPen.GetNibGlobal();
 
+#if ENABLE_VR
+            var attachTrigger = rightHand.attachTrigger;
+            if (attachTrigger.GetStateDown(SteamVR_Input_Sources.RightHand))
+            {
+                prevNibPosition = nibPostion;
+                affected = new SortedSet<Tuple<float, int>>();
+
+                for (var i = 0; i < vertices.Length; ++i)
+                {
+                    var worldVertex = transform.TransformPoint(vertices[i]);
+                    var dis = (worldVertex - nibPostion).magnitude;
+                    if (dis < radio)
+                    {
+                        affected.Add(new Tuple<float, int>(dis, i));
+                    }
+                }
+
+                //var a = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                //a.transform.position = nibPostion;
+                //a.transform.localScale = Vector3.one * 0.1f;
+
+                // affected = new SortedSet<Tuple<float, int>>(affected.Take(6));
+            }
+
+            if (attachTrigger.GetState(SteamVR_Input_Sources.RightHand))
+            {
+                foreach (var (dis, index) in affected)
+                {
+                    var worldVertex = transform.TransformPoint(vertices[index]);
+                    worldVertex += (nibPostion - prevNibPosition);
+                    vertices[index] = transform.InverseTransformPoint(worldVertex);
+                }
+                mesh.vertices = vertices;
+                mesh.RecalculateNormals();
+                mesh.RecalculateBounds();
+                mesh.RecalculateUVDistributionMetrics();
+                prevNibPosition = nibPostion;
+            }
+
+#else
             if (Input.GetMouseButtonDown(0))
             {
                 prevNibPosition = nibPostion;
@@ -139,7 +201,62 @@ namespace ShoesDesigner
                 mesh.RecalculateUVDistributionMetrics();
                 prevNibPosition = nibPostion;
             }
+#endif
+        }
 
+        private void UpdateRigging()
+        {
+            var nibPostion = seniorPen.GetNibGlobal();
+
+#if ENABLE_VR
+
+            var bindTrigger = rightHand.bindTrigger;
+            if (bindTrigger.GetStateDown(SteamVR_Input_Sources.RightHand))
+            {
+                prevNibPosition = nibPostion;
+
+                cpIndex = 0;
+                var dis = (controllPoints[cpIndex].transform.position - nibPostion).magnitude;
+                for (var i = 1; i < controllPoints.Count; ++i)
+                {
+                    var tmp_dis = (controllPoints[i].transform.position - nibPostion).magnitude;
+                    if (tmp_dis < dis)
+                    {
+                        cpIndex = i;
+                        dis = tmp_dis;
+                    }
+                }
+
+                if (dis > radio)
+                {
+                    cpIndex = -1;
+                }
+            }
+
+            if (bindTrigger.GetState(SteamVR_Input_Sources.RightHand))
+            {
+                if (cpIndex < 0)
+                {
+                    return;
+                }
+
+                var prevPos = controllPoints[cpIndex].transform.position;
+                var newPos = prevPos + (nibPostion - prevNibPosition) * 0.1f;
+                controllPoints[cpIndex].transform.position = newPos;
+                for (var i = 0; i < vertices.Length; ++i)
+                {
+                    var worldVertex = transform.TransformPoint(vertices[i]);
+                    worldVertex += (nibPostion - prevNibPosition) * riggingWeight[i][cpIndex];
+                    vertices[i] = transform.InverseTransformPoint(worldVertex);
+                }
+                mesh.vertices = vertices;
+                mesh.RecalculateNormals();
+                mesh.RecalculateBounds();
+                mesh.RecalculateUVDistributionMetrics();
+                prevNibPosition = nibPostion;
+            }
+
+#else
             if (Input.GetMouseButtonDown(2))
             {
                 prevNibPosition = nibPostion;
@@ -174,14 +291,19 @@ namespace ShoesDesigner
                 mesh.RecalculateUVDistributionMetrics();
                 prevNibPosition = nibPostion;
             }
+#endif
         }
 
         private void UpdateWireframeStatus()
         {
+#if ENABLE_VR
+
+#else
             if (Input.GetKeyDown(KeyCode.B))
             {
                 showWireframe = !showWireframe;
             }
+#endif
         }
 
         private void SetWireframeMaterial()
@@ -190,11 +312,6 @@ namespace ShoesDesigner
             wireframeMaterial.hideFlags = HideFlags.HideAndDontSave;
             wireframeMaterial.shader.hideFlags = HideFlags.HideAndDontSave;
             wireframeMaterial.SetColor("_Color", color);
-        }
-
-        private void UpdateRigging()
-        {
-            
         }
 
         private void OnRenderObject()
@@ -213,6 +330,24 @@ namespace ShoesDesigner
                 GL.Vertex(vertices[edge.y]);
             }
             GL.End();
+        }
+
+        public void ResetMaterial()
+        {
+            var meshRenderer = GetComponent<MeshRenderer>();
+            meshRenderer.material = initialMaterial;
+        }
+
+        public void SetTransparentMaterial()
+        {
+            var meshRenderer = GetComponent<MeshRenderer>();
+            meshRenderer.material = transparentMaterial;
+        }
+
+        public void SetEditableMaterial()
+        {
+            var meshRenderer = GetComponent<MeshRenderer>();
+            meshRenderer.material = editableMaterial;
         }
     }
 }

@@ -2,6 +2,8 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UIElements;
+using Valve.VR;
+using Valve.VR.InteractionSystem;
 
 namespace ShoesDesigner
 {
@@ -9,11 +11,22 @@ namespace ShoesDesigner
     {
         public static StepManager instance;
 
-        private static Step step = Step.PREPARE;
+        private Step step = Step.PREPARE;
 
-        public static bool VRMode = false;
+        public bool VRMode = true;
 
-        private static Dictionary<Step, List<GameObject>> tools;
+        [Space]
+        public Hand rightHand;
+
+        [Space]
+        public GameObject[] shoesParts;
+
+        [Header("Scene Objects")]
+        public GameObject prepareHint;
+        public GameObject generateHint;
+        public GameObject penEditor;
+        public GameObject brushSet;
+        public GameObject fluidSolver;
 
         private void Awake()
         {
@@ -27,40 +40,6 @@ namespace ShoesDesigner
             {
                 Destroy(gameObject);
             }
-
-            tools = new Dictionary<Step, List<GameObject>>();
-            // Prepare
-            var prepTools = new List<GameObject>();
-            tools[Step.PREPARE] = prepTools;
-
-            // Generate
-            var geneTools = new List<GameObject>();
-            tools[Step.GENERATE] = geneTools;
-
-            // Edit
-            var editTools = new List<GameObject>();
-            var penEditor = GameObject.Find("PenEditor");
-            penEditor.SetActive(false);
-            editTools.Add(penEditor);
-            tools[Step.EDIT] = editTools;
-
-            // Paint
-            var painTools = new List<GameObject>();
-            var brushSet = GameObject.Find("BrushSet");
-            brushSet.SetActive(false);
-            painTools.Add(brushSet);
-            tools[Step.PAINT] = painTools;
-
-            // Simulate
-            var simuTools = new List<GameObject>();
-            var fuildSover = GameObject.Find("FuildSolver");
-            fuildSover.SetActive(false);
-            simuTools.Add(fuildSover);
-            tools[Step.SIMULATE] = simuTools;
-
-            // Render
-            var rendTools = new List<GameObject>();
-            tools[Step.RENDER] = rendTools;
         }
 
 
@@ -71,7 +50,7 @@ namespace ShoesDesigner
 
         private void Update()
         {
-
+            UpdateStep();
         }
 
 
@@ -79,62 +58,103 @@ namespace ShoesDesigner
         {
             PREPARE = 0,
             GENERATE,
-            EDIT,
+            BIGEDIT,
+            SMALLEDIT,
             PAINT,
             SIMULATE,
-            RENDER,
         }
 
-        public static Step GetCurrentStep()
+        public Step GetCurrentStep()
         {
             return step;
         }
 
-        public static void SetNextStep()
+        private void UpdateStep()
         {
-            if (VRMode)
+            var nextTrigger = rightHand.nextTrigger;
+            if (nextTrigger.GetStateDown(SteamVR_Input_Sources.RightHand))
             {
-
+                SetNextStep();
             }
-            else
+
+            var previousTrigger = rightHand.previousTrigger;
+            if (previousTrigger.GetStateDown(SteamVR_Input_Sources.RightHand))
             {
-                if (Input.GetKeyDown(KeyCode.RightArrow))
-                {
-                    step = step != Step.RENDER ? step + 1 : step;
-                    foreach (var tool in tools[step])
-                    {
-                        tool.SetActive(false);
-                    }
-                    foreach (var tool in tools[step + 1])
-                    {
-                        tool.SetActive(true);
-                    }
-                }
+                SetPreviousStep();
             }
         }
 
-        public static void SetPreviousStep()
+        public void SetNextStep()
         {
-            // forbid to go back to PREPARE
-            if (VRMode)
+            switch (step)
             {
-
+                case Step.PREPARE:
+                    prepareHint.SetActive(false);
+                    generateHint.SetActive(true);
+                    break;
+                case Step.GENERATE:
+                    penEditor.SetActive(true);
+                    foreach (var part in shoesParts)
+                    {
+                        part.GetComponent<MeshEditor>().SetTransparentMaterial();
+                    }
+                    break;
+                case Step.BIGEDIT:
+                    foreach (var part in shoesParts)
+                    {
+                        part.GetComponent<MeshEditor>().ResetMaterial();
+                    }
+                    break;
+                case Step.SMALLEDIT:
+                    penEditor.SetActive(false);
+                    brushSet.SetActive(true);
+                    foreach (var part in shoesParts)
+                    {
+                        var meshRenderer = part.GetComponent<MeshEditor>();
+                        if (meshRenderer.editable)
+                        {
+                            meshRenderer.SetEditableMaterial();
+                        }
+                    }
+                    break;
+                case Step.PAINT:
+                    brushSet.SetActive(false);
+                    fluidSolver.SetActive(true);
+                    break;
+                case Step.SIMULATE:
+                    break;
+                default:
+                    break;
             }
-            else
+            step = step != Step.SIMULATE ? step + 1 : step;
+        }
+
+        public void SetPreviousStep()
+        {
+            switch (step)
             {
-                if (Input.GetKeyDown(KeyCode.LeftArrow))
-                {
-                    step = step > Step.GENERATE ? step - 1 : step;
-                    foreach (var tool in tools[step])
-                    {
-                        tool.SetActive(false);
-                    }
-                    foreach (var tool in tools[step - 1])
-                    {
-                        tool.SetActive(true);
-                    }
-                }
-            }    
+                case Step.PREPARE:
+                    break;
+                case Step.GENERATE:
+                    prepareHint.SetActive(true);
+                    generateHint.SetActive(false);
+                    break;
+                case Step.BIGEDIT:
+                    penEditor.SetActive(false);
+                    break;
+                case Step.SMALLEDIT:
+
+                    break;
+                case Step.PAINT:
+
+                    break;
+                case Step.SIMULATE:
+
+                    break;
+                default:
+                    break;
+            }
+            step = step != Step.PREPARE ? step - 1 : step; // forbid to go back to PREPARE
         }
     }
 }
